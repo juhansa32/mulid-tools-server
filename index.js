@@ -1,61 +1,69 @@
-const express = require('express');
-const fileUpload = require('express-fileupload');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-const { exec } = require('child_process');
+const express = require("express");
+const fileUpload = require("express-fileupload");
+const { exec } = require("child_process");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// 업로드 설정
 app.use(fileUpload());
+app.use(express.json());
 
-// outputs 폴더 자동 생성
-const outputsDir = path.join(__dirname, 'outputs');
-if (!fs.existsSync(outputsDir)) {
-  fs.mkdirSync(outputsDir, { recursive: true });
+// outputs 폴더 보장
+const OUTPUT_DIR = path.join(__dirname, "outputs");
+if (!fs.existsSync(OUTPUT_DIR)) {
+  fs.mkdirSync(OUTPUT_DIR);
 }
 
-// 서버 확인
-app.get('/', (req, res) => {
-  res.send('Mulid Tools Server is running!');
+// 서버 상태 확인
+app.get("/", (req, res) => {
+  res.send("Mulid Tools Server is running!");
 });
 
-// 오디오 변환 (포맷 선택)
-app.post('/convert/audio', (req, res) => {
+// 오디오 변환
+app.post("/convert/audio", async (req, res) => {
   if (!req.files || !req.files.file) {
-    return res.status(400).send('No file uploaded');
+    return res.status(400).send("파일이 없습니다.");
   }
 
-  const format = req.body.format || 'wav'; // 기본 wav
   const file = req.files.file;
+  const format = req.body.format;
+  const bitrate = req.body.bitrate || "192"; // MP3 기본값
 
-  const timestamp = Date.now();
-  const inputPath = path.join(outputsDir, `${timestamp}-${file.name}`);
-  const outputPath = path.join(outputsDir, `converted-${timestamp}.${format}`);
+  const inputPath = path.join(OUTPUT_DIR, file.name);
+  const outputName =
+    path.parse(file.name).name + "-" + Date.now() + "." + format;
+  const outputPath = path.join(OUTPUT_DIR, outputName);
 
-  file.mv(inputPath, (err) => {
-    if (err) return res.status(500).send('Upload failed');
+  // 파일 저장
+  await file.mv(inputPath);
 
-    const cmd = `ffmpeg -y -i "${inputPath}" "${outputPath}"`;
+  // ffmpeg 명령어
+  let command = "";
 
-    exec(cmd, (error) => {
-      fs.unlinkSync(inputPath);
+  if (format === "mp3") {
+    command = `ffmpeg -y -i "${inputPath}" -ab ${bitrate}k "${outputPath}"`;
+  } else {
+    command = `ffmpeg -y -i "${inputPath}" "${outputPath}"`;
+  }
 
-      if (error) {
-        console.error(error);
-        return res.status(500).send('Conversion failed');
-      }
+  exec(command, (error) => {
+    fs.unlinkSync(inputPath); // 원본 삭제
 
-      res.download(outputPath, () => {
-        fs.unlinkSync(outputPath);
-      });
+    if (error) {
+      console.error(error);
+      return res.status(500).send("변환 실패");
+    }
+
+    res.download(outputPath, () => {
+      fs.unlinkSync(outputPath); // 다운로드 후 삭제
     });
   });
 });
 
+// 서버 실행
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
