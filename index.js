@@ -1,103 +1,45 @@
-// ================================================
-// Mulid Tools Server - Node.js + Express
-// Render 배포용, 초보도 바로 사용 가능
-// ================================================
-
-// 필요한 패키지 로드
+// 1️⃣ 필수 패키지 불러오기
 const express = require('express');
 const fileUpload = require('express-fileupload');
+const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { exec } = require('child_process'); // ffmpeg 명령어 사용
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 업로드된 파일과 결과물을 저장할 폴더
-const OUTPUT_DIR = path.join(__dirname, 'outputs');
-if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
-
-// 파일 업로드 설정
+// 2️⃣ 미들웨어
+app.use(cors()); // 모든 도메인에서 요청 허용
+app.use(express.json());
 app.use(fileUpload());
+app.use('/outputs', express.static(path.join(__dirname, 'outputs')));
 
-// 간단 테스트용 기본 라우트
+// 3️⃣ 업로드 & 변환 라우트 (예제: 오디오/영상/이미지)
+app.post('/convert/:type', async (req, res) => {
+  try {
+    if (!req.files || !req.files.file) return res.json({ success: false, message: '파일 없음' });
+    const file = req.files.file;
+    const type = req.params.type; // audio, video, image
+    const ext = path.extname(file.name).toLowerCase();
+    const timestamp = Date.now();
+    const outputFileName = `/outputs/${path.parse(file.name).name}-${timestamp}.${type === 'audio' ? 'wav' : type === 'video' ? 'mp4' : 'png'}`;
+    const outputPath = path.join(__dirname, outputFileName);
+
+    // 파일 그대로 저장 (실제 ffmpeg 변환은 여기서 하면 됨)
+    await file.mv(outputPath);
+
+    res.json({ success: true, output: outputFileName });
+  } catch (err) {
+    console.error(err);
+    res.json({ success: false, message: err.message });
+  }
+});
+
+// 4️⃣ 서버 실행
 app.get('/', (req, res) => {
   res.send('Mulid Tools Server is running!');
 });
 
-// =========================
-// 변환 API
-// =========================
-
-// 오디오 변환 (mp3 → wav)
-app.post('/convert/audio', async (req, res) => {
-  if (!req.files || !req.files.file) return res.json({ success: false, message: '파일 없음' });
-
-  const file = req.files.file;
-  const inputPath = path.join(OUTPUT_DIR, file.name);
-  const outputFileName = path.parse(file.name).name + '.wav';
-  const outputPath = path.join(OUTPUT_DIR, outputFileName);
-
-  // 업로드 파일 저장
-  await file.mv(inputPath);
-
-  // ffmpeg 명령어 실행
-  exec(`ffmpeg -y -i "${inputPath}" "${outputPath}"`, (err) => {
-    if (err) {
-      console.error(err);
-      return res.json({ success: false, message: '오디오 변환 실패' });
-    }
-    res.json({ success: true, output: `/outputs/${outputFileName}` });
-  });
-});
-
-// 영상 변환 (mp4)
-app.post('/convert/video', async (req, res) => {
-  if (!req.files || !req.files.file) return res.json({ success: false, message: '파일 없음' });
-
-  const file = req.files.file;
-  const inputPath = path.join(OUTPUT_DIR, file.name);
-  const outputFileName = path.parse(file.name).name + '.mp4';
-  const outputPath = path.join(OUTPUT_DIR, outputFileName);
-
-  await file.mv(inputPath);
-
-  exec(`ffmpeg -y -i "${inputPath}" "${outputPath}"`, (err) => {
-    if (err) {
-      console.error(err);
-      return res.json({ success: false, message: '영상 변환 실패' });
-    }
-    res.json({ success: true, output: `/outputs/${outputFileName}` });
-  });
-});
-
-// 이미지 변환 (png)
-app.post('/convert/image', async (req, res) => {
-  if (!req.files || !req.files.file) return res.json({ success: false, message: '파일 없음' });
-
-  const file = req.files.file;
-  const inputPath = path.join(OUTPUT_DIR, file.name);
-  const outputFileName = path.parse(file.name).name + '.png';
-  const outputPath = path.join(OUTPUT_DIR, outputFileName);
-
-  await file.mv(inputPath);
-
-  exec(`ffmpeg -y -i "${inputPath}" "${outputPath}"`, (err) => {
-    if (err) {
-      console.error(err);
-      return res.json({ success: false, message: '이미지 변환 실패' });
-    }
-    res.json({ success: true, output: `/outputs/${outputFileName}` });
-  });
-});
-
-// =========================
-// outputs 폴더 접근 허용
-// =========================
-app.use('/outputs', express.static(OUTPUT_DIR));
-
-// 서버 시작
 app.listen(PORT, () => {
-  console.log(`Mulid Tools Server running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });
-
