@@ -1,64 +1,73 @@
-// index.js - Mulid Tools Audio Convert Server (Render 안정판)
+// index.js - Render 안정형 Mulid Tools Audio Server
 const express = require("express");
 const fileUpload = require("express-fileupload");
 const ffmpeg = require("fluent-ffmpeg");
-const fs = require("fs");
 const path = require("path");
-const ffmpegPath = require("ffmpeg-static");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// ffmpeg 경로 지정
-ffmpeg.setFfmpegPath(ffmpegPath);
-
-// outputs 폴더 자동 생성
+// outputs 폴더 존재 확인
 const outputDir = path.join(__dirname, "outputs");
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
 
+// 미들웨어
 app.use(fileUpload());
+app.use(express.static(path.join(__dirname, "public"))); // HTML 위치
 
-// 루트 테스트
+// 테스트용 기본 라우트
 app.get("/", (req, res) => {
   res.send("Mulid Tools Server is running!");
 });
 
 // 오디오 변환
 app.post("/convert/audio", async (req, res) => {
+  if (!req.files || !req.files.file) {
+    return res.status(400).send("파일이 업로드되지 않았습니다.");
+  }
+
+  const uploadedFile = req.files.file;
+  const format = req.body.format || "mp3"; // 기본 mp3
+  const bitrate = req.body.bitrate || "192"; // mp3 음질 기본 192kbps
+
+  // 임시 저장 경로
+  const tempInputPath = path.join(outputDir, `temp-${Date.now()}-${uploadedFile.name}`);
+  const ext = path.extname(uploadedFile.name);
+  const outputFileName = path.basename(uploadedFile.name, ext) + "." + format;
+  const outputFilePath = path.join(outputDir, outputFileName);
+
   try {
-    if (!req.files || !req.files.file) {
-      return res.status(400).send("No file uploaded");
-    }
+    // 업로드된 파일 임시 저장
+    await uploadedFile.mv(tempInputPath);
 
-    const uploadedFile = req.files.file;
-    const format = req.body.format || "mp3";
-    const bitrate = req.body.bitrate || "192"; // mp3 bitrate 기본값
-    const originalName = path.parse(uploadedFile.name).name;
-    const outputFile = path.join(outputDir, `${originalName}.${format}`);
+    let command = ffmpeg(tempInputPath).output(outputFilePath);
 
-    // 변환
-    ffmpeg()
-      .input(uploadedFile.data)
-      .format(format)
-      .audioBitrate(format === "mp3" ? bitrate : undefined)
-      .on("error", (err) => {
-        console.error("FFmpeg error:", err);
-        res.status(500).send("Audio conversion failed");
-      })
+    // mp3 음질 옵션
+    if (format === "mp3") command.audioBitrate(bitrate);
+
+    command
       .on("end", () => {
-        res.download(outputFile, `${originalName}.${format}`, (err) => {
-          if (err) console.error("Download error:", err);
-          fs.unlinkSync(outputFile); // 변환 후 파일 삭제
+        // 변환 후 다운로드
+        res.download(outputFilePath, outputFileName, (err) => {
+          // 임시 파일 삭제
+          fs.unlinkSync(tempInputPath);
+          fs.unlinkSync(outputFilePath);
         });
       })
-      .save(outputFile);
-
+      .on("error", (err) => {
+        console.error("FFmpeg 에러:", err);
+        fs.unlinkSync(tempInputPath);
+        return res.status(500).send("오디오 변환 실패");
+      })
+      .run();
   } catch (err) {
-    console.error("Server error:", err);
-    res.status(500).send("Server error during conversion");
+    console.error("서버 에러:", err);
+    if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
+    return res.status(500).send("오디오 변환 실패");
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Mulid Tools Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
