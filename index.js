@@ -1,78 +1,65 @@
 const express = require('express');
 const fileUpload = require('express-fileupload');
-const ffmpeg = require('fluent-ffmpeg');
-const path = require('path');
+const cors = require('cors');
 const fs = require('fs');
+const path = require('path');
+const { exec } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-/* =========================
-   필수 폴더 자동 생성
-========================= */
-const uploadsDir = path.join(__dirname, 'uploads');
-const outputsDir = path.join(__dirname, 'outputs');
+app.use(cors());
+app.use(fileUpload());
+app.use(express.json());
 
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+// outputs 폴더 자동 생성 (Render ENOENT 방지)
+const outputsDir = path.join(__dirname, 'outputs');
 if (!fs.existsSync(outputsDir)) {
   fs.mkdirSync(outputsDir, { recursive: true });
 }
 
-/* =========================
-   미들웨어
-========================= */
-app.use(fileUpload());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-/* =========================
-   서버 확인용
-========================= */
+// 서버 상태 확인용
 app.get('/', (req, res) => {
   res.send('Mulid Tools Server is running!');
 });
 
-/* =========================
-   업로드 & 변환 API
-========================= */
-app.post('/upload-and-convert', async (req, res) => {
-  try {
-    if (!req.files || !req.files.file) {
-      return res.status(400).json({ error: '파일이 없습니다' });
+// 업로드 + mp3 → wav 변환
+app.post('/upload-and-convert', (req, res) => {
+  if (!req.files || !req.files.file) {
+    return res.status(400).send('No file uploaded');
+  }
+
+  const file = req.files.file;
+  const timestamp = Date.now();
+  const inputPath = path.join(outputsDir, `${timestamp}-${file.name}`);
+  const outputPath = path.join(outputsDir, `converted-${timestamp}.wav`);
+
+  file.mv(inputPath, (err) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).send('File upload failed');
     }
 
-    const uploadedFile = req.files.file;
-    const inputPath = path.join(uploadsDir, uploadedFile.name);
-    const outputName = `${path.parse(uploadedFile.name).name}-${Date.now()}.wav`;
-    const outputPath = path.join(outputsDir, outputName);
+    const cmd = `ffmpeg -y -i "${inputPath}" "${outputPath}"`;
 
-    await uploadedFile.mv(inputPath);
+    exec(cmd, (error) => {
+      // 입력 파일 삭제
+      fs.unlinkSync(inputPath);
 
-    ffmpeg(inputPath)
-      .toFormat('wav')
-      .on('end', () => {
-        fs.unlinkSync(inputPath);
-        res.download(outputPath, outputName, () => {
-          fs.unlinkSync(outputPath);
-        });
-      })
-      .on('error', (err) => {
-        console.error(err);
-        res.status(500).json({ error: '변환 실패' });
-      })
-      .save(outputPath);
+      if (error) {
+        console.error(error);
+        return res.status(500).send('Conversion failed');
+      }
 
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
+      // ⭐ 핵심: 새 창 ❌ → 바로 다운로드 ⬇️
+      res.download(outputPath, () => {
+        // 다운로드 끝나면 결과 파일도 삭제 (서버 용량 보호)
+        fs.unlinkSync(outputPath);
+      });
+    });
+  });
 });
 
-/* =========================
-   서버 시작
-========================= */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
