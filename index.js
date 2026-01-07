@@ -1,100 +1,127 @@
 const express = require("express");
-const fileUpload = require("express-fileupload");
+const multer = require("multer");
+const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const { exec } = require("child_process");
+const ffmpeg = require("fluent-ffmpeg");
+const ffmpegPath = require("ffmpeg-static");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-/* ===============================
+/* =========================
    기본 설정
-================================ */
-app.use(fileUpload());
+========================= */
+
+app.use(cors());
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.send("Mulid Tools Server is running!");
-});
+console.log("🚀 Server booting...");
+console.log("🎬 ffmpeg path:", ffmpegPath);
 
-/* ===============================
-   폴더 준비 (중요)
-================================ */
+if (!ffmpegPath) {
+  console.error("❌ ffmpeg-static path not found");
+} else {
+  ffmpeg.setFfmpegPath(ffmpegPath);
+}
+
+/* =========================
+   업로드 폴더 보장
+========================= */
+
 const uploadDir = path.join(__dirname, "uploads");
-const outputDir = path.join(__dirname, "outputs");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+  console.log("📁 uploads folder created");
+}
 
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
+/* =========================
+   Multer 설정
+========================= */
 
-/* ===============================
-   오디오 변환 API
-   POST /convert/audio
-================================ */
-app.post("/convert/audio", async (req, res) => {
-  try {
-    if (!req.files || !req.files.file) {
-      return res.status(400).send("파일이 없습니다");
-    }
-
-    const inputFile = req.files.file;
-    const format = req.body.format || "wav";
-
-    const timestamp = Date.now();
-    const inputPath = path.join(uploadDir, `${timestamp}-${inputFile.name}`);
-    const outputPath = path.join(outputDir, `converted-${timestamp}.${format}`);
-
-    // 파일 저장
-    await inputFile.mv(inputPath);
-
-    /* ===============================
-       FFmpeg 명령어
-    ================================ */
-    let ffmpegCmd = "";
-
-    if (format === "mp3") {
-      ffmpegCmd = `ffmpeg -y -i "${inputPath}" -vn -acodec libmp3lame -ab 192k "${outputPath}"`;
-    } else if (format === "wav") {
-      ffmpegCmd = `ffmpeg -y -i "${inputPath}" "${outputPath}"`;
-    } else if (format === "ogg") {
-      ffmpegCmd = `ffmpeg -y -i "${inputPath}" -acodec libvorbis "${outputPath}"`;
-    } else if (format === "m4a") {
-      ffmpegCmd = `ffmpeg -y -i "${inputPath}" -acodec aac "${outputPath}"`;
-    } else {
-      return res.status(400).send("지원하지 않는 포맷");
-    }
-
-    /* ===============================
-       FFmpeg 실행 (중요!)
-       → 끝난 다음에만 다운로드
-    ================================ */
-    exec(ffmpegCmd, (error) => {
-      if (error) {
-        console.error("FFmpeg 오류:", error);
-        return res.status(500).send("변환 실패");
-      }
-
-      // 파일 존재 확인
-      if (!fs.existsSync(outputPath)) {
-        return res.status(500).send("출력 파일 생성 실패");
-      }
-
-      // 다운로드
-      res.download(outputPath, () => {
-        // 정리 (선택)
-        fs.unlink(inputPath, () => {});
-        fs.unlink(outputPath, () => {});
-      });
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("서버 오류");
+const upload = multer({
+  dest: uploadDir,
+  limits: {
+    fileSize: 100 * 1024 * 1024 // 100MB
   }
 });
 
-/* ===============================
+/* =========================
+   헬스 체크
+========================= */
+
+app.get("/", (req, res) => {
+  res.send("✅ Mulid Audio Convert Server Alive");
+});
+
+/* =========================
+   오디오 변환 라우트
+========================= */
+
+app.post("/convert/audio", upload.single("file"), (req, res) => {
+  console.log("📥 /convert/audio called");
+
+  try {
+    if (!req.file) {
+      console.error("❌ No file received");
+      return res.status(400).send("No file uploaded");
+    }
+
+    const format = req.body.format || "mp3";
+    const bitrate = req.body.bitrate || "192";
+
+    console.log("📄 File:", req.file.originalname);
+    console.log("🎯 Format:", format);
+    console.log("🎚 Bitrate:", bitrate);
+
+    const inputPath = req.file.path;
+    const outputPath = path.join(
+      uploadDir,
+      `${req.file.filename}.${format}`
+    );
+
+    let command = ffmpeg(inputPath);
+
+    if (format === "mp3") {
+      command = command.audioBitrate(bitrate);
+    }
+
+    command
+      .toFormat(format)
+      .on("start", (cmd) => {
+        console.log("▶ ffmpeg start:", cmd);
+      })
+      .on("error", (err) => {
+        console.error("❌ ffmpeg error:", err.message);
+        if (!res.headersSent) {
+          res.status(500).send("Conversion failed");
+        }
+      })
+      .on("end", () => {
+        console.log("✅ ffmpeg finished");
+
+        res.download(outputPath, (err) => {
+          if (err) {
+            console.error("❌ download error:", err);
+          }
+
+          // 파일 정리
+          fs.unlink(inputPath, () => {});
+          fs.unlink(outputPath, () => {});
+        });
+      })
+      .save(outputPath);
+
+  } catch (e) {
+    console.error("🔥 Server exception:", e);
+    res.status(500).send("Server crashed");
+  }
+});
+
+/* =========================
    서버 시작
-================================ */
+========================= */
+
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
