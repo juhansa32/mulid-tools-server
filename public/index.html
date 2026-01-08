@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mulid Tools – 무료 온라인 파일 변환기</title>
+  <meta name="description" content="오디오 파일을 MP3, WAV, OGG, M4A로 무료 변환하는 온라인 도구입니다." />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      max-width: 480px;
+      margin: 40px auto;
+      padding: 20px;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 10px;
+    }
+
+    p {
+      font-size: 14px;
+      color: #555;
+      text-align: center;
+    }
+
+    input[type="file"] {
+      width: 100%;
+      margin: 15px 0;
+    }
+
+    .formats label {
+      display: block;
+      margin: 6px 0;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      font-size: 16px;
+      margin-top: 15px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+    }
+
+    .status {
+      margin-top: 15px;
+      text-align: center;
+      font-weight: bold;
+    }
+
+    footer {
+      margin-top: 30px;
+      font-size: 12px;
+      color: #777;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<h1>🎧 Mulid Tools</h1>
+<p>오디오 파일을 빠르게 변환하세요. (MP3 / WAV / OGG / M4A)</p>
+
+<form id="convertForm">
+  <input type="file" name="file" required />
+
+  <div class="formats">
+    <label><input type="radio" name="format" value="mp3" checked /> MP3</label>
+    <label><input type="radio" name="format" value="wav" /> WAV</label>
+    <label><input type="radio" name="format" value="ogg" /> OGG</label>
+    <label><input type="radio" name="format" value="m4a" /> M4A</label>
+  </div>
+
+  <button type="submit">변환 시작</button>
+</form>
+
+<div id="status" class="status"></div>
+
+<footer>
+  <p>
+    업로드된 파일은 변환 후 즉시 삭제됩니다.<br />
+    <a href="/privacy.html">개인정보처리방침</a>
+  </p>
+</footer>
+
+<script>
+  const form = document.getElementById("convertForm");
+  const statusDiv = document.getElementById("status");
+  const button = form.querySelector("button");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    statusDiv.textContent = "⏳ 변환 중입니다...";
+    button.disabled = true;
+
+    const formData = new FormData(form);
+
+    try {
+      const res = await fetch("/convert/audio", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!res.ok) throw new Error("변환 실패");
+
+      const blob = await res.blob();
+      const format = formData.get("format");
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "converted." + format;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      statusDiv.textContent = "✅ 변환 완료! 다운로드가 시작됩니다.";
+    } catch (e) {
+      statusDiv.textContent = "❌ 변환 중 오류가 발생했습니다.";
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
+
+</body>
+</html>
